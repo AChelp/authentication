@@ -5,8 +5,9 @@ const app = express();
 const bodyParser = require('body-parser');
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-const bcrypt = require('bcrypt');
-const saltRounds = 10;
+const session = require('express-session');
+const passport = require('passport');
+const passportLocalMongoose = require('passport-local-mongoose');
 
 const port = 3000;
 
@@ -16,7 +17,16 @@ app.use(bodyParser.urlencoded({
 	extended: true
 }));
 app.use(express.static('public'));
-app.listen(process.env.PORT || port, () => console.log("Server is starting on port " + port + "!"));
+
+app.use(session({
+	secret: 'Our little secret.',
+	resave: false,
+	saveUninitialized: false,
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+mongoose.set('useCreateIndex', true);
 
 mongoose.connect('mongodb://localhost:27017/userDB', {
 	useNewUrlParser: true
@@ -27,8 +37,15 @@ const userSchema = new mongoose.Schema({
 	password: String
 });
 
+userSchema.plugin(passportLocalMongoose);
 
 const User = new mongoose.model('User', userSchema);
+
+passport.use(User.createStrategy());
+
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
+
 
 app.get('/', (req, res) => {
 	res.render("home");
@@ -42,38 +59,51 @@ app.get('/register', (req, res) => {
 	res.render('register');
 });
 
+
+app.get('/secrets', (req, res) => {
+	if (req.isAuthenticated()) {
+		res.render('secrets');
+	} else {
+		res.redirect('/login');
+	}
+});
+
+
 app.post('/register', (req, res) => {
-	bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
-		const newUser = new User({
-			email: req.body.username,
-			password: hash
-		});
-		newUser.save((err) => {
+
+	User.register({
+			username: req.body.username
+		},
+		req.body.password, (err, user) => {
 			if (err) {
 				console.log(err);
+				res.redirect('/register');
 			} else {
-				res.render('secrets');
+				passport.authenticate('local')(req, res, function() {
+					res.redirect('/secrets');
+				});
 			}
-		});
-	});
+		}
+	);
 
 });
 
 app.post('/login', (req, res) => {
-
-	User.findOne({
-		email: req.body.username
-	}, (err, foundUser) => {
+	const user = new User({
+		username: req.body.username,
+		password: req.body.password
+	});
+	req.login(user, (err) => {
 		if (err) {
 			console.log(err);
 		} else {
-			if (foundUser) {
-				bcrypt.compare(req.body.password, foundUser.password, function(err, result) {
-					if (result) {
-						res.render('secrets');
-					}
-				});
-			}
+			passport.authenticate('local')(req, res, function() {
+				res.redirect('/secrets');
+			});
 		}
 	});
 });
+
+
+
+app.listen(process.env.PORT || port, () => console.log("Server is starting on port " + port + "!"));
